@@ -1,0 +1,6 @@
+.rea-runtime/
+evidence.json
+evaluation.json
+inventory-*.json
+rea-help.txt
+dependency-summary.json
