@@ -1,0 +1,75 @@
+name: REA | Public synthetic fixture free runner
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: Standard GitHub-hosted runner (public repository only)
+        required: true
+        type: choice
+        default: macos
+        options:
+          - macos
+          - ubuntu
+          - windows
+permissions:
+  contents: read
+concurrency:
+  group: rea-free-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  synthetic-only:
+    if: ${{ github.event_name == 'workflow_dispatch' && !github.event.repository.private }}
+    runs-on: ${{ inputs.platform == 'macos' && 'macos-15-intel' || inputs.platform == 'windows' && 'windows-2025' || 'ubuntu-24.04' }}
+    timeout-minutes: 25
+    env:
+      REA_VERSION: '6.4.0'
+      NPM_CONFIG_AUDIT: 'false'
+      NPM_CONFIG_FUND: 'false'
+    steps:
+      - name: Checkout only public synthetic repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          submodules: false
+      - name: Verify safety and synthetic-only contract
+        shell: bash
+        run: python3 scripts/preflight.py
+      - name: Install Node.js 24.11.0
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.11.0'
+      - name: Install REA only inside disposable runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .rea-runtime
+          npm install --prefix .rea-runtime --save-exact "rea-agents@${REA_VERSION}"
+          node .rea-runtime/node_modules/rea-agents/scripts/rea.mjs --help > rea-help.txt
+          npm ls --prefix .rea-runtime --depth=0 --json > dependency-summary.json
+      - name: Inventory available REA capabilities
+        shell: bash
+        run: |
+          set -euo pipefail
+          node .rea-runtime/node_modules/rea-agents/scripts/rea.mjs capabilities --json > inventory-capabilities.json
+          node .rea-runtime/node_modules/rea-agents/scripts/rea.mjs providers --json > inventory-providers.json
+      - name: Inspect synthetic JavaScript application
+        shell: bash
+        run: |
+          set -euo pipefail
+          node .rea-runtime/node_modules/rea-agents/scripts/rea.mjs analyze-javascript-application targets/fixture-app --json > evidence.json
+          python3 scripts/evaluate.py evidence.json > evaluation.json
+      - name: Attach evidence from disposable runner
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rea-public-${{ inputs.platform }}-${{ github.run_id }}
+          path: |
+            rea-help.txt
+            dependency-summary.json
+            .rea-runtime/package-lock.json
+            inventory-capabilities.json
+            inventory-providers.json
+            evidence.json
+            evaluation.json
+          if-no-files-found: warn
+          retention-days: 1
